@@ -17,6 +17,11 @@ TOKEN_URL = "https://accounts.spotify.com/api/token"
 config_file = os.environ.get("CONFIG_FILES")
 config_file_name = "spotify.yaml"
 parameter = {"client_id": 0, "client_secret": 0, "redirect_uri": 0}
+patricia_parameter = {
+    "patricia_client_id": 0,
+    "patricia_client_secret": 0,
+    "redirect_uri": 0,
+}
 STATE = secrets.token_urlsafe(16)
 
 
@@ -32,7 +37,11 @@ def read_yaml(parameter):
             with open(file_path, "r", encoding="utf-8") as file:
                 data = yaml.safe_load(file)
                 for i in parameter:
-                    if i in data:
+                    if i in data and i != "redirect_uri":
+                        j = i.split("_")
+                        j = f"{j[1]}_{j[2]}"
+                        params[j] = data[i]
+                    else:
                         params[i] = data[i]
         else:
             logger.info("Filepath is wrong %s", file_path)
@@ -59,17 +68,15 @@ def authkey(parameter: dict, TOKEN_URL) -> dict:
     return auth_token
 
 
-short_term_token = "BQAyrwDjj61BExol7QRJCnNXbJ0uy2AyejBFVYwV1Zld7XsZB-aTrculQLwTHYqZPSafg-GXhrhH2QU3GLkJNEU-YSaWqhsydDgvSPkxAA41sm1rHxOlu1bb-ajtq4xIczjtysG4lbI"
-
-
 def get_authorize_url(parameter, AUTH_URL, STATE):
     params = read_yaml(parameter)
     q = {
         "client_id": params["client_id"],
         "response_type": "code",
         "redirect_uri": params["redirect_uri"],
-        "scope": "user-read-private user-read-email",
+        "scope": "user-library-read user-read-private user-read-email",
         "state": STATE,
+        "show_dialog": "true",
     }
     return f"{AUTH_URL}?{urllib.parse.urlencode(q)}"
 
@@ -90,7 +97,7 @@ def exchange_code_for_tokens(parameter, TOKEN_URL, code):
 
 def get_user(user_access_token: str) -> dict:
     response = requests.get(
-        "https://api.spotify.com/v1/me",
+        url="https://api.spotify.com/v1/me",
         headers={"Authorization": f"Bearer {user_access_token}"},
     )
     return response.json()
@@ -102,6 +109,7 @@ def get_users_playlist(user_id: str, user_access_token: str) -> dict:
         headers={"Authorization": f"Bearer {user_access_token}"},
     )
     response.raise_for_status()
+    print(response.json())
     return response.json()
 
 
@@ -130,22 +138,20 @@ def get_playlists_items(
 def get_all_playlists_items(playlist_id: str, user_access_token: str) -> dict:
     offset = 0
     full_playlist = []
-    items = get_playlists_items(playlist_id, user_access_token, offset=offset)
-    if offset != 0:
-        offset = items["offset"]
-        for i in range(offset):
-            full_playlist.append(items["items"])
-
-    else:
-        full_playlist.append(items["items"])
-
+    while True:
+        page = get_playlists_items(playlist_id, user_access_token, offset=offset)
+        items = page.get("items", [])
+        full_playlist.extend(items)
+        if not page.get("next"):
+            break
+        offset = page["offset"]
     return full_playlist
 
 
 def create_playlist(user_id: str, name_of_playlist: str = "Princess") -> str:
     response = requests.get(
         url=f"https://api.spotify.com/v1/users/{user_id}/playlists",
-        data={
+        json={
             "name": name_of_playlist,
             "description": "New Playlist for Patricia to have all songs",
         },
@@ -162,56 +168,85 @@ def add_items_to_playlist(
     playlist_id: str, user_access_token: str, uris: list[str]
 ) -> dict:
     response = requests.post(
-        url="https://api.spotify.com/v1/playlists/{playlist_id}/tracks",
+        url=f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks",
         headers={
             "Authorization": f"Bearer {user_access_token}",
             "Content-Type": "application/json",
         },
-        data={
+        json={
             "uris": uris,
         },
     )
     return response.json()
 
 
+class CallbackHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path != urllib.parse.urlparse(params["redirect_uri"]).path:
+            self.send_response(404)
+            self.end_headers()
+            return
+        qs = urllib.parse.parse_qs(parsed.query)
+        code_box["code"] = (qs.get("code") or [""])[0]
+        code_box["state"] = (qs.get("state") or [""])[0]
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(b"Alles gut! Du kannst dieses Fenster schliessen.")
+
+    def log_message(self, *args):  # ruhig
+        pass
+
+
+def get_users_liked_songs(
+    user_access_token: str, limit: int = 40, offset: str = 0
+) -> dict:
+    response = requests.get(
+        url="https://api.spotify.com/v1/me/tracks",
+        headers={
+            "Authorization": f"Bearer {user_access_token}",
+            "Accept": "application/json",
+        },
+        params={
+            "limit": limit,
+            "offset": offset,
+        },
+    )
+    print(response.text)
+    response.raise_for_status()
+    return response.json()
+
+
+def get_all_users_liked_songs(user_access_token, limit, offset) -> dict:
+    all_songs = {}
+    songs = "asdf"
+    pass
+
+
+def write_stuff(name_of_list: str, data):
+    with open(name_of_list, mode="a", encoding="utf-8") as file:
+        file.write(data)
+
+
 if __name__ == "__main__":
-    auth_url = get_authorize_url(parameter, AUTH_URL, STATE)
-    params = read_yaml(parameter)
+    auth_url = get_authorize_url(patricia_parameter, AUTH_URL, STATE)
+    params = read_yaml(patricia_parameter)
     parsed = urllib.parse.urlparse(auth_url)
-    print(auth_url, parsed)
     webbrowser.open(auth_url)
     code_box = {"code": None, "state": None}
-
-    class CallbackHandler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            parsed = urllib.parse.urlparse(self.path)
-            if parsed.path != urllib.parse.urlparse(params["redirect_uri"]).path:
-                self.send_response(404)
-                self.end_headers()
-                return
-            qs = urllib.parse.parse_qs(parsed.query)
-            code_box["code"] = (qs.get("code") or [""])[0]
-            code_box["state"] = (qs.get("state") or [""])[0]
-            self.send_response(200)
-            self.send_header("Content-Type", "text/plain; charset=utf-8")
-            self.end_headers()
-            self.wfile.write(b"Alles gut! Du kannst dieses Fenster schliessen.")
-
-        def log_message(self, *args):  # ruhig
-            pass
 
     # Port/Host aus redirect_uri ableiten (z.B. 127.0.0.1:8888)
     parsed_cb = urllib.parse.urlparse(params["redirect_uri"])
     host = parsed_cb.hostname or "127.0.0.1"
     port = parsed_cb.port or 80
 
-    print(f"Warte auf Redirect unter {host}:{port}{parsed_cb.path} ...")
     HTTPServer((host, port), CallbackHandler).handle_request()
-    tokens = exchange_code_for_tokens(parameter, TOKEN_URL, code_box["code"])
+    tokens = exchange_code_for_tokens(patricia_parameter, TOKEN_URL, code_box["code"])
     user_access_token = tokens["access_token"]
-    user_data = get_user(user_access_token=user_access_token)
-    playlists = get_users_playlist(user_data["id"], user_access_token)
-    playlists_items = get_all_playlists_items(
-        playlist_id="4A8llJEJAUoH1qCrcQG2gP", user_access_token=user_access_token
-    )
-    print(playlists_items)
+    user_data = get_user(user_access_token)
+    user_access_token_auth = authkey(patricia_parameter, TOKEN_URL)
+    print(user_access_token_auth.text)
+    print(user_access_token)
+    songs = get_users_liked_songs(user_access_token)
+    print(songs)
