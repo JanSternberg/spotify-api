@@ -158,16 +158,18 @@ def create_playlist(user_id: str, name_of_playlist: str = "Princess") -> str:
     return response.json()["id"]
 
 
-def add_items_to_playlist(playlist_id: str, user_access_token: str, uris: list[str]) -> dict:
+def add_items_to_playlist(
+    playlist_id: str, user_access_token: str, uris: list[str]
+) -> dict:
     response = requests.post(
         url="https://api.spotify.com/v1/playlists/{playlist_id}/tracks",
-        headers = {
+        headers={
             "Authorization": f"Bearer {user_access_token}",
             "Content-Type": "application/json",
-        }
-        data = {
+        },
+        data={
             "uris": uris,
-        }
+        },
     )
     return response.json()
 
