@@ -96,6 +96,52 @@ def get_user(user_access_token: str) -> dict:
     return response.json()
 
 
+def get_users_playlist(user_id: str, user_access_token: str) -> dict:
+    response = requests.get(
+        url=f"https://api.spotify.com/v1/users/{user_id}/playlists",
+        headers={"Authorization": f"Bearer {user_access_token}"},
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def get_playlists_items(
+    playlist_id: str,
+    user_access_token: str,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict:
+    url = f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks"
+    response = requests.get(
+        url=url,
+        headers={
+            "Authorization": f"Bearer {user_access_token}",
+        },
+        params={
+            "limit": limit,
+            "offset": offset,
+            "fields": "items(track(id, name)), offset",
+        },
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def get_all_playlists_items(playlist_id: str, user_access_token: str) -> dict:
+    offset = 0
+    full_playlist = []
+    items = get_playlists_items(playlist_id, user_access_token, offset=offset)
+    if offset != 0:
+        offset = items["offset"]
+        for i in range(offset):
+            full_playlist.append(items["items"])
+
+    else:
+        full_playlist.append(items["items"])
+
+    return full_playlist
+
+
 if __name__ == "__main__":
     auth_url = get_authorize_url(parameter, AUTH_URL, STATE)
     params = read_yaml(parameter)
@@ -130,4 +176,10 @@ if __name__ == "__main__":
     print(f"Warte auf Redirect unter {host}:{port}{parsed_cb.path} ...")
     HTTPServer((host, port), CallbackHandler).handle_request()
     tokens = exchange_code_for_tokens(parameter, TOKEN_URL, code_box["code"])
-    access_token_user = tokens["access_token"]
+    user_access_token = tokens["access_token"]
+    user_data = get_user(user_access_token=user_access_token)
+    playlists = get_users_playlist(user_data["id"], user_access_token)
+    playlists_items = get_all_playlists_items(
+        playlist_id="4A8llJEJAUoH1qCrcQG2gP", user_access_token=user_access_token
+    )
+    print(playlists_items)
