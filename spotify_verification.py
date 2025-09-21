@@ -141,6 +141,20 @@ def get_all_playlists_items(playlist_id: str, user_access_token: str) -> dict:
 
     return full_playlist
 
+def create_playlist(user_id:str, name_of_playlist: str = "Princess")-> dict:
+    response = requests.get(
+        url = f"https://api.spotify.com/v1/users/{user_id}/playlists",
+        data = {
+            "name": name_of_playlist,
+            "description": "New Playlist for Patricia to have all songs",
+        }
+        headers= {
+            "Authorization": f"Bearer {user_access_token}",
+            "Content-Type:": "application/json"
+        }
+    )
+    logger.info("Created new Playlist. Name: %s," name_of_playlist)
+    return response.json()
 
 if __name__ == "__main__":
     auth_url = get_authorize_url(parameter, AUTH_URL, STATE)
