@@ -5,7 +5,8 @@ import os
 import base64
 import logging
 import yaml
-import urllib.parse, secrets
+import urllib.parse, secrets, webbrowser
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s, %(lineno)s, %(message)s")
@@ -73,13 +74,13 @@ def get_authorize_url(parameter, AUTH_URL, STATE):
     return f"{AUTH_URL}?{urllib.parse.urlencode(q)}"
 
 
-def exchange_code_for_tokens(parameter, TOKEN_URL):
+def exchange_code_for_tokens(parameter, TOKEN_URL, code):
     params = read_yaml(parameter)
     response = requests.post(
         TOKEN_URL,
         data={
             "grant_type": "authorization_code",
-            "code": "code",
+            "code": code,
             "redirect_uri": params["redirect_uri"],
         },
         auth=(params["client_id"], params["client_secret"]),
@@ -97,5 +98,36 @@ def get_user(user_access_token: str) -> dict:
 
 if __name__ == "__main__":
     auth_url = get_authorize_url(parameter, AUTH_URL, STATE)
+    params = read_yaml(parameter)
     parsed = urllib.parse.urlparse(auth_url)
     print(auth_url, parsed)
+    webbrowser.open(auth_url)
+    code_box = {"code": None, "state": None}
+
+    class CallbackHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            parsed = urllib.parse.urlparse(self.path)
+            if parsed.path != urllib.parse.urlparse(params["redirect_uri"]).path:
+                self.send_response(404)
+                self.end_headers()
+                return
+            qs = urllib.parse.parse_qs(parsed.query)
+            code_box["code"] = (qs.get("code") or [""])[0]
+            code_box["state"] = (qs.get("state") or [""])[0]
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(b"Alles gut! Du kannst dieses Fenster schliessen.")
+
+        def log_message(self, *args):  # ruhig
+            pass
+
+    # Port/Host aus redirect_uri ableiten (z.B. 127.0.0.1:8888)
+    parsed_cb = urllib.parse.urlparse(params["redirect_uri"])
+    host = parsed_cb.hostname or "127.0.0.1"
+    port = parsed_cb.port or 80
+
+    print(f"Warte auf Redirect unter {host}:{port}{parsed_cb.path} ...")
+    HTTPServer((host, port), CallbackHandler).handle_request()
+    tokens = exchange_code_for_tokens(parameter, TOKEN_URL, code_box["code"])
+    access_token_user = tokens["access_token"]
