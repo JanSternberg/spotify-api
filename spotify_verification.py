@@ -120,7 +120,7 @@ def get_playlists_items(
         params={
             "limit": limit,
             "offset": offset,
-            "fields": "items(track(id, name)), offset",
+            "fields": "items(track(uri, name)), offset",
         },
     )
     response.raise_for_status()
@@ -141,20 +141,36 @@ def get_all_playlists_items(playlist_id: str, user_access_token: str) -> dict:
 
     return full_playlist
 
-def create_playlist(user_id:str, name_of_playlist: str = "Princess")-> dict:
+
+def create_playlist(user_id: str, name_of_playlist: str = "Princess") -> str:
     response = requests.get(
-        url = f"https://api.spotify.com/v1/users/{user_id}/playlists",
-        data = {
+        url=f"https://api.spotify.com/v1/users/{user_id}/playlists",
+        data={
             "name": name_of_playlist,
             "description": "New Playlist for Patricia to have all songs",
-        }
-        headers= {
+        },
+        headers={
             "Authorization": f"Bearer {user_access_token}",
-            "Content-Type:": "application/json"
+            "Content-Type:": "application/json",
+        },
+    )
+    logger.info("Created new Playlist. Name: %s", name_of_playlist)
+    return response.json()["id"]
+
+
+def add_items_to_playlist(playlist_id: str, user_access_token: str, uris: list[str]) -> dict:
+    response = requests.post(
+        url="https://api.spotify.com/v1/playlists/{playlist_id}/tracks",
+        headers = {
+            "Authorization": f"Bearer {user_access_token}",
+            "Content-Type": "application/json",
+        }
+        data = {
+            "uris": uris,
         }
     )
-    logger.info("Created new Playlist. Name: %s," name_of_playlist)
     return response.json()
+
 
 if __name__ == "__main__":
     auth_url = get_authorize_url(parameter, AUTH_URL, STATE)
