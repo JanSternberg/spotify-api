@@ -6,6 +6,7 @@ import base64
 import logging
 import yaml
 import urllib.parse, secrets, webbrowser
+from typing import Dict, List
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 
@@ -16,11 +17,11 @@ AUTH_URL = "https://accounts.spotify.com/authorize"
 TOKEN_URL = "https://accounts.spotify.com/api/token"
 config_file = os.environ.get("CONFIG_FILES")
 config_file_name = "spotify.yaml"
-parameter = {"client_id": 0, "client_secret": 0, "redirect_uri": 0}
+jans_parameter = {"jans_client_id": 0, "jans_client_secret": 0, "alls_redirect_uri": 0}
 patricia_parameter = {
     "patricia_client_id": 0,
     "patricia_client_secret": 0,
-    "redirect_uri": 0,
+    "alls_redirect_uri": 0,
 }
 STATE = secrets.token_urlsafe(16)
 
@@ -37,12 +38,13 @@ def read_yaml(parameter):
             with open(file_path, "r", encoding="utf-8") as file:
                 data = yaml.safe_load(file)
                 for i in parameter:
-                    if i in data and i != "redirect_uri":
+                    if i in data:
                         j = i.split("_")
                         j = f"{j[1]}_{j[2]}"
                         params[j] = data[i]
                     else:
-                        params[i] = data[i]
+                        print(i)
+                        params[i] = i
         else:
             logger.info("Filepath is wrong %s", file_path)
     if not params:
@@ -55,8 +57,6 @@ def authkey(parameter: dict, TOKEN_URL) -> dict:
     authorization = f'{params["client_id"]}:{params["client_secret"]}'
     authorization = authorization.encode("utf-8")
     authorization = base64.b64encode(authorization).decode("ascii")
-    logger.info(authorization)
-
     auth_token = requests.post(
         url=TOKEN_URL,
         headers={
@@ -69,12 +69,12 @@ def authkey(parameter: dict, TOKEN_URL) -> dict:
 
 
 def get_authorize_url(parameter, AUTH_URL, STATE):
-    params = read_yaml(parameter)
+    params = parameter
     q = {
         "client_id": params["client_id"],
         "response_type": "code",
         "redirect_uri": params["redirect_uri"],
-        "scope": "user-library-read user-read-private user-read-email",
+        "scope": "user-library-read user-read-private user-read-email playlist-modify-public playlist-modify-private",
         "state": STATE,
         "show_dialog": "true",
     }
@@ -82,7 +82,7 @@ def get_authorize_url(parameter, AUTH_URL, STATE):
 
 
 def exchange_code_for_tokens(parameter, TOKEN_URL, code):
-    params = read_yaml(parameter)
+    params = parameter
     response = requests.post(
         TOKEN_URL,
         data={
@@ -92,6 +92,7 @@ def exchange_code_for_tokens(parameter, TOKEN_URL, code):
         },
         auth=(params["client_id"], params["client_secret"]),
     )
+    logging.info("echange_code_for_tokens")
     return response.json()
 
 
@@ -148,8 +149,12 @@ def get_all_playlists_items(playlist_id: str, user_access_token: str) -> dict:
     return full_playlist
 
 
-def create_playlist(user_id: str, name_of_playlist: str = "Princess") -> str:
-    response = requests.get(
+def create_playlist(
+    user_id: str,
+    user_access_token: str,
+    name_of_playlist: str = "Princess",
+) -> str:
+    response = requests.post(
         url=f"https://api.spotify.com/v1/users/{user_id}/playlists",
         json={
             "name": name_of_playlist,
@@ -157,11 +162,11 @@ def create_playlist(user_id: str, name_of_playlist: str = "Princess") -> str:
         },
         headers={
             "Authorization": f"Bearer {user_access_token}",
-            "Content-Type:": "application/json",
+            "Content-Type": "application/json",
         },
     )
     logger.info("Created new Playlist. Name: %s", name_of_playlist)
-    return response.json()["id"]
+    return response.json()
 
 
 def add_items_to_playlist(
@@ -183,7 +188,7 @@ def add_items_to_playlist(
 class CallbackHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
-        if parsed.path != urllib.parse.urlparse(params["redirect_uri"]).path:
+        if parsed.path != urllib.parse.urlparse(copy_to_params["redirect_uri"]).path:
             self.send_response(404)
             self.end_headers()
             return
@@ -199,23 +204,32 @@ class CallbackHandler(BaseHTTPRequestHandler):
         pass
 
 
-def get_users_liked_songs(
+def get_users_saved_tracks(
     user_access_token: str, limit: int = 40, offset: str = 0
 ) -> dict:
-    response = requests.get(
-        url="https://api.spotify.com/v1/me/tracks",
-        headers={
-            "Authorization": f"Bearer {user_access_token}",
-            "Accept": "application/json",
-        },
-        params={
-            "limit": limit,
-            "offset": offset,
-        },
-    )
-    print(response.text)
+    full_playlist = []
+    offset = offset
+    url = "https://api.spotify.com/v1/me/tracks"
+    while True:
+        response = requests.get(
+            url=url,
+            headers={
+                "Authorization": f"Bearer {user_access_token}",
+                "Accept": "application/json",
+            },
+            params={
+                "limit": limit,
+                "offset": offset,
+            },
+        )
+        items = response.json()["items"]
+        for track in items:
+            full_playlist.append(track["track"]["uri"])
+        url = response.json()["next"]
+        if url is None:
+            break
     response.raise_for_status()
-    return response.json()
+    return full_playlist
 
 
 def get_all_users_liked_songs(user_access_token, limit, offset) -> dict:
@@ -224,29 +238,74 @@ def get_all_users_liked_songs(user_access_token, limit, offset) -> dict:
     pass
 
 
-def write_stuff(name_of_list: str, data):
+def write_stuff(name_of_list: str, data: list):
     with open(name_of_list, mode="a", encoding="utf-8") as file:
-        file.write(data)
+        file.write("Track:  \n")
+        for track in data:
+            file.write(f"- {str(track)}\n")
+
+
+def read_songs_yaml():
+    with open("patricias_loved_songs.yaml", "r") as file:
+        data = yaml.safe_load(file)
+        return data
+
+
+def add_items_to_playlist(
+    playlist_id: str, uris: Dict[str, List[str]], user_access_token
+):
+    repeats = int(len(uris["tracks"]) / 100) + 1
+    chunks = 100
+    tracks = uris["tracks"]
+    for i in range(repeats):
+        start = i * chunks
+        end = start + chunks
+        batch = tracks[start:end]
+        response = requests.post(
+            url=f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks",
+            json={
+                "uris": batch,
+            },
+            headers={
+                "Authorization": f"Bearer {user_access_token}",
+                "Content-Type": "application/json",
+            },
+        )
+    return response.text
 
 
 if __name__ == "__main__":
-    auth_url = get_authorize_url(patricia_parameter, AUTH_URL, STATE)
-    params = read_yaml(patricia_parameter)
+    copy_to_params = read_yaml(jans_parameter)
+    copy_from_params = read_yaml(patricia_parameter)
+    code_box = {"code": None, "state": None}
+    logger.info(copy_to_params)
+
+    auth_url = get_authorize_url(copy_to_params, AUTH_URL, STATE)
+    logger.info(auth_url)
     parsed = urllib.parse.urlparse(auth_url)
     webbrowser.open(auth_url)
-    code_box = {"code": None, "state": None}
 
     # Port/Host aus redirect_uri ableiten (z.B. 127.0.0.1:8888)
-    parsed_cb = urllib.parse.urlparse(params["redirect_uri"])
+    parsed_cb = urllib.parse.urlparse(copy_to_params["redirect_uri"])
     host = parsed_cb.hostname or "127.0.0.1"
     port = parsed_cb.port or 80
 
     HTTPServer((host, port), CallbackHandler).handle_request()
-    tokens = exchange_code_for_tokens(patricia_parameter, TOKEN_URL, code_box["code"])
+    tokens = exchange_code_for_tokens(copy_to_params, TOKEN_URL, code_box["code"])
+    logger.info(tokens)
     user_access_token = tokens["access_token"]
     user_data = get_user(user_access_token)
-    user_access_token_auth = authkey(patricia_parameter, TOKEN_URL)
-    print(user_access_token_auth.text)
-    print(user_access_token)
-    songs = get_users_liked_songs(user_access_token)
-    print(songs)
+    user_id = user_data["id"]
+    logger.info(user_id)
+    user_access_token_auth = authkey(copy_to_params, TOKEN_URL)
+    # songs = get_users_saved_tracks(user_access_token)
+    # write_stuff("patricias_loved_songs", songs)
+    playlist = create_playlist(user_id, user_access_token)
+    logger.info(playlist)
+    test = add_items_to_playlist(
+        playlist_id=playlist["id"],
+        uris=read_songs_yaml(),
+        user_access_token=user_access_token,
+    )
+    print(test)
+    print("success bitch!")
